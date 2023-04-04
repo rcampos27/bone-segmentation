@@ -7,20 +7,27 @@ import numpy as np
 from pathlib import Path
 from datetime import date
 
-input_paths = ['E:\\TCC\\_data\\input\\ClinicaUnioeste', 'E:\\TCC\\_data\\input\\ClinicaUltraface']
+input_path = 'E:\\_TCC\\_data\\input\\training'
 
-output_path = 'E:\\TCC\\_data\\output'
+output_path = 'E:\\_TCC\\_data\\output\\training'
 
 ivns = []
 ages = []
 genders = []
-#! Colors
-purple = (140, 71, 84)
-orange = (33,36,231)
-red = (76, 158, 242)
-white = (255, 255, 255)
+#! Colors (B, G, R)
+red = (0, 0, 255)
+orange = (0, 134, 255)
+yellow = (0, 215, 255)
+green = (0, 255, 81)
+blue = (255, 161, 0) 
 
-def saveAsPNG(path, file_number, image_number):
+orange_pastel = (88, 176, 255)
+yellow_pastel = (88, 229, 255)
+blue_pastel = (242, 186, 92)
+
+black = (0, 0, 0)
+
+def saveAsPNG(path, image_number):
     dicom = pydicom.dcmread(path)
 
     # * Implementation Version Names: imagem de exame -> 'CV_102' (219908 arquivos); laudo -> 'CYBERMEDDCM30' (209 arquivos)
@@ -56,73 +63,67 @@ def saveAsPNG(path, file_number, image_number):
             value = hu [row][col]
             if value < 148:
                 #? BACKGROUND
-                mask[row][col] = (0,0,0)            
+                mask[row][col] = black       
             elif value >= 148 and value <= 667 :
                 #? OSSO ESPONJOSO (III|IV / SOFT)
-                mask[row][col] = purple
+                mask[row][col] = blue
             elif value >= 668 and value <= 1000 :
                 #? OSSO COMPACTO (II|III / NORMAL)
-                # Maize Crayola
-                mask[row][col] = (168, 137, 4)
+                mask[row][col] = green
             elif value >= 1001 and value <= 1770 :
                 #? OSSO COMPACTO (I / HARD)
-                # Maize Crayola
-                mask[row][col] = orange
+                mask[row][col] = yellow
             elif value >= 1771 and value <= 2850 :
                 #? ESMALTE 
-                mask[row][col] = red
+                mask[row][col] = orange
             else:
-                # White
-                mask[row][col] = white
+                mask[row][col] = red
 
-    # ? Sobrepõe a imagem original e a máscara da segmentação
-    img2 = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-    final = cv2.addWeighted(img2, 0.8, mask, 0.6, 0.0)
+    img_name = f'{output_path}\\{image_number}'
 
-    img_name = f'{output_path}\\{file_number}-{image_number}'
+    h = round((512 - img.shape[0])/2)
+    w = round((512 - img.shape[1])/2)
+    img_src = cv2.copyMakeBorder(src=img, top=h, bottom=h, left=w, right=w, borderType=cv2.BORDER_CONSTANT) 
+    img_msk = cv2.copyMakeBorder(src=mask, top=h, bottom=h, left=w, right=w, borderType=cv2.BORDER_CONSTANT) 
 
-    # cv2.imwrite(f'{img_name}.png', img)
-    # cv2.imwrite(f'{img_name}_final.png', final)
-    cv2.imwrite(f'{img_name}_mask.png', mask)
+    cv2.imwrite(f'{img_name}.png', img_src)
+    cv2.imwrite(f'{img_name}_e.png', img_msk)
 
     dicom.clear()
-
 
 if __name__ == "__main__":
     patient = 0
     dcm_sizes = []
     total_processed = 0
     stop = False
+    counter = 0
     Path(output_path).mkdir(parents=True, exist_ok=True)
 
-    for input_path in input_paths:
+    patient = 0
+    for root, dirs, files in os.walk(input_path):
+        id = int(patient/3)
+        for name in files:
+            counter += 1
+            path = os.path.join(root, name)
+            print(f'{path}\\{id}\\{counter}')
+            saveAsPNG(f'{path}', counter)
+            # if patient > 6:
+            #     stop = True
+            #     break
+        dcm_sizes.append(counter)
+        patient += 1
+        if stop:
+            break
 
-        patient = 0
-        for root, dirs, files in os.walk(input_path):
-            counter = 0
-            id = int(patient/3)
-            for name in files:
-                counter += 1
-                path = os.path.join(root, name)
-                print(f'{path}\\{id}\\{counter}')
-                saveAsPNG(f'{path}', id, counter)
-                # if patient > 6:
-                #     stop = True
-                #     break
-            dcm_sizes.append(counter)
-            patient += 1
-            if stop:
-                break
-
-    result = list(Counter(dcm_sizes).items())
-    final_ivns = list(Counter(ivns).items())
-    final_ages = sorted(list(Counter(ages).items()), key=lambda tup:tup[0])
-    final_genders = list(Counter(genders).items())
-    print(sorted(result, key=lambda x: x[1]))
-    print(f'{patient} images')
-    print('IVNS')
-    print(final_ivns)
-    print('Ages')
-    print(final_ages)
-    print('Genders')
-    print(final_genders)
+result = list(Counter(dcm_sizes).items())
+final_ivns = list(Counter(ivns).items())
+final_ages = sorted(list(Counter(ages).items()), key=lambda tup:tup[0])
+final_genders = list(Counter(genders).items())
+print(sorted(result, key=lambda x: x[1]))
+print(f'{patient} images')
+print('IVNS')
+print(final_ivns)
+print('Ages')
+print(final_ages)
+print('Genders')
+print(final_genders)
