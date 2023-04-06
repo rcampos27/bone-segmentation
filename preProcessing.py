@@ -7,25 +7,19 @@ import numpy as np
 from pathlib import Path
 from datetime import date
 
-input_path = 'E:\\_TCC\\_data\\input\\training'
+input_path = 'D:\\TCC\\data\\input'
+output_path = 'D:\\TCC\\data\\output'
+img_size = 512
 
-output_path = 'E:\\_TCC\\_data\\output\\training'
-
-ivns = []
-ages = []
-genders = []
 #! Colors (B, G, R)
 red = (0, 0, 255)
 orange = (0, 134, 255)
 yellow = (0, 215, 255)
 green = (0, 255, 81)
-blue = (255, 161, 0) 
-
-orange_pastel = (88, 176, 255)
-yellow_pastel = (88, 229, 255)
-blue_pastel = (242, 186, 92)
-
+blue = (255, 161, 0)
 black = (0, 0, 0)
+white = (255, 255, 255)
+
 
 def saveAsPNG(path, image_number):
     dicom = pydicom.dcmread(path)
@@ -49,7 +43,6 @@ def saveAsPNG(path, image_number):
     #     else:
     #         ages.append(age)
 
-
     img = dicom.pixel_array.astype(float)
     img = (img - img.min()) / (img.max() - img.min()) * 255.0
     img = img.astype(np.uint8)
@@ -58,38 +51,74 @@ def saveAsPNG(path, image_number):
     hu = apply_modality_lut(dicom.pixel_array, dicom)
 
     mask = np.zeros((img.shape[1], img.shape[0], 3), np.uint8)
+    limiar = np.zeros((img.shape[1], img.shape[0], 3), np.uint8)
     for row in range(0, len(hu)):
         for col in range(0, len(hu[row])):
-            value = hu [row][col]
+            value = hu[row][col]
             if value < 148:
-                #? BACKGROUND
-                mask[row][col] = black       
-            elif value >= 148 and value <= 667 :
-                #? OSSO ESPONJOSO (III|IV / SOFT)
-                mask[row][col] = blue
-            elif value >= 668 and value <= 1000 :
-                #? OSSO COMPACTO (II|III / NORMAL)
-                mask[row][col] = green
-            elif value >= 1001 and value <= 1770 :
-                #? OSSO COMPACTO (I / HARD)
-                mask[row][col] = yellow
-            elif value >= 1771 and value <= 2850 :
-                #? ESMALTE 
-                mask[row][col] = orange
+                # ? BACKGROUND
+                limiar[row][col] = black
+            elif value >= 148 and value <= 667:
+                # ? OSSO ESPONJOSO (III|IV / SOFT)
+                limiar[row][col] = blue
+            elif value >= 668 and value <= 1000:
+                # ? OSSO COMPACTO (II|III / NORMAL)
+                limiar[row][col] = green
+                if value > 850:
+                    mask[row][col] = white
+            elif value >= 1001 and value <= 1770:
+                # ? OSSO COMPACTO (I / HARD)
+                limiar[row][col] = yellow
+                mask[row][col] = white
+            elif value >= 1771 and value <= 2850:
+                # ? ESMALTE
+                limiar[row][col] = orange
+                mask[row][col] = white
             else:
-                mask[row][col] = red
+                limiar[row][col] = red
+                mask[row][col] = white
 
-    img_name = f'{output_path}\\{image_number}'
+    kernel7 = np.ones((7, 7),np.uint8)
+    kernel9 = np.ones((9, 9),np.uint8)
 
-    h = round((512 - img.shape[0])/2)
-    w = round((512 - img.shape[1])/2)
-    img_src = cv2.copyMakeBorder(src=img, top=h, bottom=h, left=w, right=w, borderType=cv2.BORDER_CONSTANT) 
-    img_msk = cv2.copyMakeBorder(src=mask, top=h, bottom=h, left=w, right=w, borderType=cv2.BORDER_CONSTANT) 
+    canny = cv2.Canny(mask, 10, 200)
+    canny = cv2.GaussianBlur(canny, (7, 7), 0)
+    canny = cv2.dilate(canny, kernel9, iterations=3)
+    canny = cv2.erode(canny, kernel7, iterations=3)
+    morph = cv2.morphologyEx(canny, cv2.MORPH_CLOSE, kernel7)
 
-    cv2.imwrite(f'{img_name}.png', img_src)
-    cv2.imwrite(f'{img_name}_e.png', img_msk)
+    contours, _  = cv2.findContours(morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contour = cv2.drawContours(morph, contours, -1, white, cv2.FILLED)
+
+    contour = cv2.cvtColor(contour, cv2.COLOR_GRAY2BGR)
+    filtered_limiar = cv2.bitwise_and(limiar, contour)
+
+    h = round((img_size - img.shape[0])/2)
+    w = round((img_size - img.shape[1])/2)
+    # img_src = cv2.copyMakeBorder(src=img, top=h, bottom=h, left=w, right=w, borderType=cv2.BORDER_CONSTANT)
+    # cv2.imwrite(f'{img_name}.png', img_src)
+
+
+    #! Save Hounsfield values array, padded till 512x512, this file will later be loaded and converted into a PyTorch tensor and serve as input for the neural networks
+    hu = cv2.copyMakeBorder(src=hu, top=h, bottom=h, left=w,
+                            right=w, borderType=cv2.BORDER_CONSTANT, value=hu.min())
+    input_name = f'{output_path}\\input\\{image_number}'
+    np.save(f'{input_name}.npy', hu)
+
+    # Save expected segmentation
+    img_limiar = cv2.copyMakeBorder(
+        src=filtered_limiar, top=h, bottom=h, left=w, right=w, borderType=cv2.BORDER_CONSTANT, value=black)
+    exp_name = f'{output_path}\\expected\\{image_number}'
+    cv2.imwrite(f'{exp_name}.png', img_limiar)
+
+    # Save the hard tissue mask generated 
+    img_contour = cv2.copyMakeBorder(
+        src=contour, top=h, bottom=h, left=w, right=w, borderType=cv2.BORDER_CONSTANT, value=black)
+    msk_name = f'{output_path}\\mask\\{image_number}'
+    cv2.imwrite(f'{msk_name}.png', img_contour)
 
     dicom.clear()
+
 
 if __name__ == "__main__":
     patient = 0
@@ -107,23 +136,11 @@ if __name__ == "__main__":
             path = os.path.join(root, name)
             print(f'{path}\\{id}\\{counter}')
             saveAsPNG(f'{path}', counter)
-            # if patient > 6:
-            #     stop = True
-            #     break
         dcm_sizes.append(counter)
         patient += 1
         if stop:
             break
 
 result = list(Counter(dcm_sizes).items())
-final_ivns = list(Counter(ivns).items())
-final_ages = sorted(list(Counter(ages).items()), key=lambda tup:tup[0])
-final_genders = list(Counter(genders).items())
 print(sorted(result, key=lambda x: x[1]))
 print(f'{patient} images')
-print('IVNS')
-print(final_ivns)
-print('Ages')
-print(final_ages)
-print('Genders')
-print(final_genders)
